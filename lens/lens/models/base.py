@@ -554,7 +554,7 @@ class LensModel(ptl.LightningModule, metaclass=abc.ABCMeta):
         devices: Union[List[int], str, int] = None,
         mc_dropout: int = 0,
         progress_bar: bool = True,
-        accelerator: str = "auto",
+        accelerator: str = None,
         num_workers: int = None,
         length_batching: bool = True,
     ) -> Prediction:
@@ -572,7 +572,7 @@ class LensModel(ptl.LightningModule, metaclass=abc.ABCMeta):
             mc_dropout (int): Number of inference steps to run using MCD. Defaults to 0
             progress_bar (bool): Flag that turns on and off the predict progress bar.
                 Defaults to True
-            accelarator (str): Pytorch Lightning accelerator (e.g: 'cpu', 'cuda', 'hpu'
+            accelerator (str): Pytorch Lightning accelerator (e.g: 'cpu', 'cuda', 'hpu'
                 , 'ipu', 'mps', 'tpu'). Defaults to 'auto'
             num_workers (int): Number of workers to use when loading and preparing
                 data. Defaults to None
@@ -583,36 +583,44 @@ class LensModel(ptl.LightningModule, metaclass=abc.ABCMeta):
             Prediction object with `scores`, `system_score` and any metadata returned
                 by the model.
         """
-        # Don't use all GPUs if there are less samples than GPUs
-        if devices and len(devices) > 0:
-          # Don't use all GPUs if there are less samples than GPUs
-          if len(samples) < len(devices): 
-              devices = range(len(samples))
-          gpus = len(devices)
-        else:
-          gpus = 0
+        if devices is None:
+            devices = "auto"
+        if accelerator is None:
+            accelerator = "auto"
+
+        multi_gpu = False
+        # If using more than 2 GPUs, multiple process are created and need
+        #  some sheananigans. Also, ensuring that there is more samples than
+        #  gpus.
+        if accelerator == "gpu":
+            if isinstance(devices, list):
+                devices = devices[:len(samples)]
+                n_gpus = len(devices)
+            elif isinstance(devices, int):
+                devices = min(devices, len(samples))
+                n_gpus = devices
+            elif devices is None or devices == "auto":
+                n_gpus = torch.cuda.device_count()
+
+            if n_gpus > 1:
+                multi_gpu = True
+                num_workers = 2 * max(n_gpus)
         
+        callbacks = []
+        if multi_gpu:
+            pred_writer = CustomWriter()
+            callbacks = [pred_writer]
+
         if mc_dropout > 0:
             self.set_mc_dropout(mc_dropout)
 
-        if devices is not None:
-            assert len(devices) == gpus, AssertionError(
-                "List of devices must be same size as `gpus`"
-            )
-        else:
-            devices = gpus if gpus > 0 else None
-
         sampler = SequentialSampler(samples)
-        if length_batching and gpus < 2:
+        if length_batching and not multi_gpu:
             try:
                 sort_ids = np.argsort([len(sample["src"]) for sample in samples])
             except KeyError:
                 sort_ids = np.argsort([i for i, sample in enumerate(samples)])
             sampler = OrderedSampler(sort_ids)
-
-        if num_workers is None:
-            # Guideline for workers that typically works well.
-            num_workers = 2 * gpus
 
         self.eval()
         dataloader = DataLoader(
@@ -622,14 +630,6 @@ class LensModel(ptl.LightningModule, metaclass=abc.ABCMeta):
             collate_fn=self.prepare_for_inference,
             num_workers=num_workers,
         )
-        if gpus > 1:
-            pred_writer = CustomWriter()
-            callbacks = [pred_writer]
-        else:
-            callbacks = []
-
-        if gpus == 0: 
-          devices = 'auto'
 
         if progress_bar:
             enable_progress_bar = True
@@ -646,25 +646,25 @@ class LensModel(ptl.LightningModule, metaclass=abc.ABCMeta):
             devices=devices,
             logger=False,
             callbacks=callbacks,
-            accelerator=accelerator if gpus > 0 else "cpu",
+            accelerator=accelerator,
             strategy="auto",
             enable_progress_bar=enable_progress_bar,
         )
-        return_predictions = False if gpus > 1 else True
+        return_predictions = False if multi_gpu else True
         predictions = trainer.predict(
             self, dataloaders=dataloader, return_predictions=return_predictions
         )
-        if gpus > 1:
+        if multi_gpu:
             torch.distributed.barrier()  # Waits for all processes to finish predict
 
         # If we are in the GLOBAL RANK we need to gather all predictions
-        if gpus > 1 and trainer.is_global_zero:
+        if multi_gpu and trainer.is_global_zero:
             predictions = pred_writer.gather_all_predictions()
             # Delete Temp folder.
             pred_writer.cleanup()
             return predictions
 
-        elif gpus > 1 and not trainer.is_global_zero:
+        elif multi_gpu and not trainer.is_global_zero:
             # If we are not in the GLOBAL RANK we will return None
             exit()
 
@@ -674,7 +674,7 @@ class LensModel(ptl.LightningModule, metaclass=abc.ABCMeta):
         else:
             metadata = []
 
-        if length_batching and gpus < 2:
+        if length_batching and not multi_gpu:
             scores = restore_list_order(scores, sort_ids)
             output = Prediction(scores=scores, system_score=sum(scores) / len(scores))
             if metadata:

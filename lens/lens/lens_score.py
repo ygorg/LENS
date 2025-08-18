@@ -6,10 +6,11 @@ class LENS:
     def __init__(
             self, 
             path: str, 
-            rescale: bool = False
+            rescale: bool = False,
+            map_location: any = None
         ):
         self.rescale = rescale
-        self.model = load_from_checkpoint(path)
+        self.model = load_from_checkpoint(path, map_location=map_location)
 
     def score(
             self, 
@@ -17,7 +18,8 @@ class LENS:
             simplified: list[str], 
             references: list[list[str]], 
             batch_size: int = 16, 
-            devices: list[int] = None
+            devices: list[int] = None,
+            accelerator: str = None,
         ):
         all_data = []
         for com, hyp, refs in zip(complex, simplified, references):
@@ -28,7 +30,8 @@ class LENS:
         prediction = self.model.predict(
             all_data, 
             batch_size=batch_size, 
-            devices=devices
+            devices=devices,
+            accelerator=accelerator,
         )
         orig_scores = prediction.scores
 
@@ -56,9 +59,10 @@ class LENS:
 class LENS_SALSA:
     def __init__(
             self, 
-            path: str
+            path: str,
+            map_location: any = None
         ):
-        self.model = load_from_checkpoint(path)
+        self.model = load_from_checkpoint(path, map_location=map_location)
         self.use_references = False
 
         self.target_column = self.model.target_column
@@ -140,7 +144,8 @@ class LENS_SALSA:
             simplified: list[str], 
             references: list[list[str]] = None, 
             batch_size: int = 16, 
-            devices: list[int] = None
+            devices: list[int] = None,
+            accelerator: str = None,
         ):
         if references:
             # Reference eval
@@ -162,7 +167,8 @@ class LENS_SALSA:
         prediction = self.model.predict(
             all_data, 
             batch_size=batch_size, 
-            devices=devices
+            devices=devices,
+            accelerator=accelerator,
         )
 
         prediction.scores = [s*100 for s in prediction.scores]

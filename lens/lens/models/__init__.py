@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Union
 
 import yaml
+import torch
 from huggingface_hub import snapshot_download
 
 from .regression_metric_multi_ref import RegressionMetricMultiReference
@@ -41,7 +42,7 @@ def download_model(
     return checkpoint_path
 
 
-def load_from_checkpoint(checkpoint_path: str) -> LensModel:
+def load_from_checkpoint(checkpoint_path: str, map_location=None) -> LensModel:
     """Loads models from a checkpoint path.
 
     Args:
@@ -50,6 +51,11 @@ def load_from_checkpoint(checkpoint_path: str) -> LensModel:
     Return:
         COMET model.
     """
+    if map_location is None:
+        map_location = 'cpu'
+        if torch.cuda.is_available():
+            map_location = 'gpu'
+
     checkpoint_path = Path(checkpoint_path)
 
     if not checkpoint_path.is_file():
@@ -66,7 +72,7 @@ def load_from_checkpoint(checkpoint_path: str) -> LensModel:
         #     checkpoint_path, load_pretrained_weights=False, strict=False
         # )
         model = model_class.load_from_checkpoint(
-            checkpoint_path, **hparams, strict=False
+            checkpoint_path, **hparams, strict=False, map_location=map_location
         )
         return model
     else:
