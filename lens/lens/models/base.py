@@ -555,7 +555,7 @@ class LensModel(ptl.LightningModule, metaclass=abc.ABCMeta):
         mc_dropout: int = 0,
         progress_bar: bool = True,
         accelerator: str = None,
-        num_workers: int = None,
+        num_workers: int = 0,
         length_batching: bool = True,
     ) -> Prediction:
         """Method that receives a list of samples (dictionaries with translations,
@@ -575,7 +575,7 @@ class LensModel(ptl.LightningModule, metaclass=abc.ABCMeta):
             accelerator (str): Pytorch Lightning accelerator (e.g: 'cpu', 'cuda', 'hpu'
                 , 'ipu', 'mps', 'tpu'). Defaults to 'auto'
             num_workers (int): Number of workers to use when loading and preparing
-                data. Defaults to None
+                data. Defaults to 0.
             length_batching (bool): If set to true, reduces padding by sorting samples
                 by sequence length. Defaults to True.
 
