@@ -54,7 +54,7 @@ def load_from_checkpoint(checkpoint_path: str, map_location=None) -> LensModel:
     if map_location is None:
         map_location = 'cpu'
         if torch.cuda.is_available():
-            map_location = 'gpu'
+            map_location = 'cuda'
 
     checkpoint_path = Path(checkpoint_path)
 
